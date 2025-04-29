@@ -21,7 +21,6 @@ const devices = {
 
 // Simulate message latency
 const config = { MESSAGE_DELAY: 700 };
-let isPhoneDisconnected = false;
 
 function delay(ms) {
   return new Promise(res => setTimeout(res, ms));
@@ -43,6 +42,7 @@ io.on('connection', socket => {
 
     devices[role] = socket;
     socket.role    = role;
+    
     await delay(config.MESSAGE_DELAY);
     socket.emit('role-confirmed', role);
     console.log(`[SERVER] Registered "${role}" as ${socket.id}`);
@@ -52,12 +52,15 @@ io.on('connection', socket => {
   socket.on('request-values', async data => {
     console.log(`[DEBUG] Received request-values from ${socket.id} (role: ${socket.role})`);
     console.log(`[DEBUG] Phone device exists: ${!!devices.phone}`);
-    console.log(`[DEBUG] Phone disconnected: ${isPhoneDisconnected}`);
+    console.log(`[DEBUG] Phone connected: ${devices.phone?.connected}`);
     
-    if (socket.role !== 'laptop' || !devices.phone || isPhoneDisconnected) {
-      console.log(`[DEBUG] Skipping forward due to: ${socket.role !== 'laptop' ? 'wrong role' : !devices.phone ? 'no phone' : 'phone disconnected'}`);
+    if (socket.role !== 'laptop' || !devices.phone || !devices.phone.connected) {
+      const reason = socket.role !== 'laptop' ? 'wrong role' : 
+                    !devices.phone ? 'no phone' : 'phone not connected';
+      console.log(`[DEBUG] Skipping forward due to: ${reason}`);
       return;
     }
+    
     const n1 = Number(data.n1), n2 = Number(data.n2);
     await delay(config.MESSAGE_DELAY);
     devices.phone.emit('value-request', { n1, n2 });
@@ -66,7 +69,7 @@ io.on('connection', socket => {
 
   // — Phone sends back actual values → forward to laptop —
   socket.on('send-values', async data => {
-    if (socket.role !== 'phone' || !devices.laptop || isPhoneDisconnected) return;
+    if (socket.role !== 'phone' || !devices.laptop || !devices.laptop.connected) return;
     await delay(config.MESSAGE_DELAY);
     devices.laptop.emit('receive-values', data);
     console.log(`[SERVER] send-values → receive-values:`, data);
@@ -74,7 +77,7 @@ io.on('connection', socket => {
 
   // — Phone says "I don't have them" → forward as values-not-found —
   socket.on('values-not-found', async data => {
-    if (socket.role !== 'phone' || !devices.laptop || isPhoneDisconnected) return;
+    if (socket.role !== 'phone' || !devices.laptop || !devices.laptop.connected) return;
     await delay(config.MESSAGE_DELAY);
     devices.laptop.emit('values-not-found', data);
     console.log(`[SERVER] values-not-found → values-not-found:`, data);
@@ -82,7 +85,7 @@ io.on('connection', socket => {
 
   // — Laptop computed a new chunk → store on phone —
   socket.on('computed-result', async data => {
-    if (socket.role !== 'laptop' || !devices.phone || isPhoneDisconnected) return;
+    if (socket.role !== 'laptop' || !devices.phone || !devices.phone.connected) return;
     await delay(config.MESSAGE_DELAY);
     devices.phone.emit('store-value', data);
     console.log(`[SERVER] computed-result → store-value:`, data);
@@ -91,9 +94,8 @@ io.on('connection', socket => {
   // — Phone manual disconnect/reconnect —
   socket.on('phone-disconnect', async () => {
     if (socket.role !== 'phone') return;
-    isPhoneDisconnected = true;
     console.log('[SERVER] Phone storage disconnected');
-    if (devices.laptop) {
+    if (devices.laptop?.connected) {
       await delay(config.MESSAGE_DELAY);
       devices.laptop.emit('phone-disconnected');
     }
@@ -101,9 +103,8 @@ io.on('connection', socket => {
 
   socket.on('phone-reconnect', async savedState => {
     if (socket.role !== 'phone') return;
-    isPhoneDisconnected = false;
     console.log('[SERVER] Phone storage reconnected');
-    if (devices.laptop) {
+    if (devices.laptop?.connected) {
       await delay(config.MESSAGE_DELAY);
       devices.laptop.emit('phone-reconnected', savedState);
     }
@@ -111,7 +112,7 @@ io.on('connection', socket => {
 
   // — (Optional) laptop UI "Reconnect Storage" button —
   socket.on('request-reconnect', async () => {
-    if (socket.role === 'laptop' && devices.phone) {
+    if (socket.role === 'laptop' && devices.phone?.connected) {
       await delay(config.MESSAGE_DELAY);
       devices.phone.emit('reconnect-requested');
     }
@@ -120,15 +121,18 @@ io.on('connection', socket => {
   // — Clean up on any socket disconnect —
   socket.on('disconnect', async reason => {
     console.log(`[SERVER] ${socket.role || 'unknown'} disconnected: ${reason}`);
-    if (socket.role === 'phone') {
-      isPhoneDisconnected = true;
-      if (devices.laptop) {
-        await delay(config.MESSAGE_DELAY);
-        devices.laptop.emit('phone-disconnected');
-      }
-    }
+    
     if (socket.role) {
-      devices[socket.role] = null;
+      // If this was the current device for this role, clear it
+      if (devices[socket.role] === socket) {
+        devices[socket.role] = null;
+        
+        // If phone disconnects, notify laptop
+        if (socket.role === 'phone' && devices.laptop?.connected) {
+          await delay(config.MESSAGE_DELAY);
+          devices.laptop.emit('phone-disconnected');
+        }
+      }
       delete socket.role;
     }
   });
