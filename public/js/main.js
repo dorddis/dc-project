@@ -284,10 +284,17 @@ const config = {
   
     // PHONE → handle value-request
     s.on('value-request', async data => {
-      if (state.deviceRole !== 'phone' || state.isPhoneDisconnected) return;
+      console.log('[DEBUG] Phone received value-request:', data);
+      if (state.deviceRole !== 'phone' || state.isPhoneDisconnected) {
+        console.log('[DEBUG] Phone ignoring request due to:', state.deviceRole !== 'phone' ? 'wrong role' : 'disconnected');
+        return;
+      }
       await delay(config.MESSAGE_DELAY);
   
       const n1 = Number(data.n1), n2 = Number(data.n2);
+      console.log('[DEBUG] Phone checking values for:', { n1, n2 });
+      console.log('[DEBUG] Phone current storage:', Array.from(state.values.entries()));
+      
       if (isNaN(n1) || isNaN(n2)) {
         updateUI('Invalid request', 'phone');
         return;
@@ -295,6 +302,7 @@ const config = {
   
       const has1 = state.values.has(n1),
             has2 = state.values.has(n2);
+      console.log('[DEBUG] Phone has values:', { has1, has2 });
   
       if (has1 && has2) {
         const vals = { [n1]: state.values.get(n1), [n2]: state.values.get(n2) };
