@@ -286,7 +286,8 @@ const config = {
       if (state.deviceRole === 'laptop' && state.targetN !== null) {
         // If we were in the middle of a computation, try to resume
         updateUI('Resuming previous computation', 'laptop');
-        requestFibonacciComputation();
+        // Add a small delay to ensure connection is stable
+        setTimeout(() => requestFibonacciComputation(), 1000);
       } else {
         showRoleSelection();
       }
@@ -314,12 +315,14 @@ const config = {
         loadState();
         // If we have a saved state, notify laptop
         if (state.values.size > 0) {
-          s.emit('phone-reconnect', {
-            values: Array.from(state.values.entries()),
-            targetN: state.targetN,
-            originalTarget: state.originalTarget,
-            messageCount: state.messageCount
-          });
+          setTimeout(() => {
+            s.emit('phone-reconnect', {
+              values: Array.from(state.values.entries()),
+              targetN: state.targetN,
+              originalTarget: state.originalTarget,
+              messageCount: state.messageCount
+            });
+          }, 1000);
         }
       } else {
         initializeBaseValues();
@@ -335,6 +338,8 @@ const config = {
       startDisconnectTimer();
       // Clear pending requests when phone disconnects
       state.pendingRequests.clear();
+      // Pause computation
+      state.isComputing = false;
     });
   
     s.on('phone-reconnected', saved => {
@@ -348,7 +353,9 @@ const config = {
         // Merge saved values with current values
         const savedValues = new Map(saved.values);
         for (const [k, v] of savedValues) {
-          state.values.set(k, v);
+          if (!state.values.has(k)) {
+            state.values.set(k, v);
+          }
         }
         state.targetN = saved.targetN;
         state.originalTarget = saved.originalTarget;
@@ -358,13 +365,16 @@ const config = {
         // Clear pending requests and resume computation
         state.pendingRequests.clear();
         if (state.targetN !== null && !state.isComputing) {
-          // Re-add current target to computation queue
-          state.computationQueue.add(state.targetN);
-          // Process computation queue
-          const next = Math.min(...state.computationQueue);
-          state.computationQueue.delete(next);
-          state.targetN = next;
-          requestFibonacciComputation();
+          // Add a small delay to ensure connection is stable
+          setTimeout(() => {
+            // Re-add current target to computation queue
+            state.computationQueue.add(state.targetN);
+            // Process computation queue
+            const next = Math.min(...state.computationQueue);
+            state.computationQueue.delete(next);
+            state.targetN = next;
+            requestFibonacciComputation();
+          }, 1000);
         }
       } else {
         updateUI('Storage reconnected (no state)', 'laptop');
