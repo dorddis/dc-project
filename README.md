@@ -35,7 +35,7 @@ This project demonstrates a distributed Fibonacci sequence calculation using Web
 
 2. Access the web interface:
    - On your laptop: http://localhost:3000
-   - On your mobile device: Use your laptop's local IP address (e.g., http://192.168.1.x:3000)
+   - On your mobile device: Use your laptop's local IP address (e.g., http://192.168.x.x:3000)
 
 3. Select roles for each device:
    - One device should select "Laptop" role (computation)
