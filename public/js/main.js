@@ -294,80 +294,91 @@ function setupSocketHandlers(socket) {
         }
     });
 
-    socket.on('values-not-found', async (data) => {
-        if (state.deviceRole !== 'laptop') return;
-        
-        const { n1, n2 } = data;
-        if (n1 === undefined || n2 === undefined) {
-            updateUI('Received invalid values-not-found response');
-            return;
-        }
-        
-        updateUI(`Values not found for F(${n1}) and F(${n2})`);
-        
-        // Add these to our computation queue if they're not already computed
-        if (!(n1 in state.values)) {
-            state.computationQueue.add(n1);
-        }
-        if (!(n2 in state.values)) {
-            state.computationQueue.add(n2);
-        }
-        
-        if (state.computationQueue.size > 0) {
-            // Start with the smallest number
-            const next = Math.min(...state.computationQueue);
-            state.targetN = next;
-            state.computationQueue.delete(next);
-            await requestFibonacciComputation();
-        }
-    });
-
-    socket.on('receive-values', async (data) => {
-        if (state.deviceRole !== 'laptop') return;
-        
-        await delay(config.MESSAGE_DELAY);
-        const { n1, n2, values } = data;
-        
-        // Store the received values
-        Object.assign(state.values, values);
-        updateMessageCount();
-        
-        const receivedValues = Object.keys(values).map(n => `F(${n})=${values[n]}`);
-        updateUI(`Received values: ${receivedValues.join(', ')}`);
-        
-        // Continue with our target computation
-        await requestFibonacciComputation();
-    });
-
     socket.on('compute-values', async (data) => {
         if (state.deviceRole !== 'laptop') return;
         
         const { n1, n2 } = data;
-        if (n1 === undefined || n2 === undefined) {
-            updateUI('Received invalid computation request');
-            return;
-        }
-        
         updateUI(`Computing values for F(${n1}) and F(${n2})`);
         
+        // Compute both values
         const value1 = computeFibonacci(n1);
         const value2 = computeFibonacci(n2);
         
-        if (value1 !== undefined && value2 !== undefined) {
+        // Create result object with computed values
+        const result = {};
+        if (value1 !== undefined) result[n1] = value1;
+        if (value2 !== undefined) result[n2] = value2;
+        
+        if (Object.keys(result).length > 0) {
             await delay(config.MESSAGE_DELAY);
-            socket.emit('computed-result', { [n1]: value1, [n2]: value2 });
+            socket.emit('computed-result', result);
             updateMessageCount();
-            updateUI(`Computed F(${n1}) = ${value1} and F(${n2}) = ${value2}`);
+            
+            // Store values locally
+            Object.assign(state.values, result);
+            
+            const valueStr = Object.entries(result)
+                .map(([n, v]) => `F(${n})=${v}`)
+                .join(', ');
+            updateUI(`Computed: ${valueStr}`);
+            
+            // Continue computation if there are more values in queue
+            if (state.computationQueue.size > 0) {
+                const next = Math.min(...state.computationQueue);
+                state.targetN = next;
+                state.computationQueue.delete(next);
+                await requestFibonacciComputation();
+            }
         } else {
             updateUI('Error computing Fibonacci values');
         }
     });
 
-    // Phone handlers
+    socket.on('store-value', async (data) => {
+        if (state.deviceRole !== 'phone' || state.isPhoneDisconnected) return;
+        
+        await delay(config.MESSAGE_DELAY);
+        
+        // Validate incoming data
+        if (typeof data !== 'object' || data === null) {
+            updateUI('Received invalid data format');
+            return;
+        }
+        
+        // Store each valid value
+        let stored = false;
+        for (const [n, value] of Object.entries(data)) {
+            const num = parseInt(n);
+            if (!isNaN(num) && !isNaN(value)) {
+                state.values[num] = value;
+                stored = true;
+            }
+        }
+        
+        if (stored) {
+            updateMessageCount();
+            const storedValues = Object.entries(data)
+                .map(([n, v]) => `F(${n})=${v}`)
+                .join(', ');
+            updateUI(`Stored values: ${storedValues}`);
+            updateStorageTable();
+            saveState();
+        } else {
+            updateUI('No valid values to store');
+        }
+    });
+
     socket.on('value-request', async (data) => {
         if (state.deviceRole !== 'phone' || state.isPhoneDisconnected) return;
         
         await delay(config.MESSAGE_DELAY);
+        
+        // Validate incoming request
+        if (!data || typeof data.n1 !== 'number' || typeof data.n2 !== 'number') {
+            updateUI('Received invalid value request');
+            return;
+        }
+        
         const { n1, n2 } = data;
         const values = {};
         let missingValues = false;
@@ -388,10 +399,12 @@ function setupSocketHandlers(socket) {
         if (!missingValues) {
             socket.emit('send-values', { n1, n2, values });
             updateMessageCount();
-            const sentValues = Object.entries(values).map(([n, v]) => `F(${n})=${v}`);
-            updateUI(`Sent values: ${sentValues.join(', ')}`);
+            const sentValues = Object.entries(values)
+                .map(([n, v]) => `F(${n})=${v}`)
+                .join(', ');
+            updateUI(`Sent values: ${sentValues}`);
         } else {
-            // Pass back the original numbers that were requested
+            // Send back the original numbers in the correct format
             socket.emit('values-not-found', { n1, n2 });
             updateUI(`Values not found for F(${n1}) and F(${n2})`);
         }
@@ -399,54 +412,58 @@ function setupSocketHandlers(socket) {
         updateStorageTable();
     });
 
-    socket.on('store-value', async (data) => {
-        if (state.deviceRole !== 'phone' || state.isPhoneDisconnected) return;
+    socket.on('values-not-found', async (data) => {
+        if (state.deviceRole !== 'laptop') return;
         
-        await delay(config.MESSAGE_DELAY);
-        const { n, value } = data;
-        
-        if (n === undefined || value === undefined) {
-            updateUI('Received invalid value to store');
+        // Validate incoming data
+        if (!data || typeof data.n1 !== 'number' || typeof data.n2 !== 'number') {
+            updateUI('Received invalid values-not-found response');
             return;
         }
         
-        state.values[n] = value;
-        updateMessageCount();
-        updateUI(`Stored F(${n}) = ${value}`);
-        updateStorageTable();
-        saveState();
+        const { n1, n2 } = data;
+        updateUI(`Values not found for F(${n1}) and F(${n2})`);
+        
+        // Add missing values to computation queue
+        if (!(n1 in state.values)) {
+            state.computationQueue.add(n1);
+        }
+        if (!(n2 in state.values)) {
+            state.computationQueue.add(n2);
+        }
+        
+        if (state.computationQueue.size > 0) {
+            const next = Math.min(...state.computationQueue);
+            state.targetN = next;
+            state.computationQueue.delete(next);
+            await requestFibonacciComputation();
+        }
     });
 
-    socket.on('computed-result', async (data) => {
-        if (state.deviceRole !== 'laptop' || !elements.phone || state.isPhoneDisconnected) return;
+    socket.on('receive-values', async (data) => {
+        if (state.deviceRole !== 'laptop') return;
         
         await delay(config.MESSAGE_DELAY);
-        const computedValues = {};
         
-        // Validate and process each computed value
-        for (const [n, value] of Object.entries(data)) {
-            if (value !== undefined && !isNaN(value)) {
-                computedValues[n] = value;
-                state.values[n] = value;
-            }
+        // Validate incoming data
+        if (!data || !data.values || typeof data.values !== 'object') {
+            updateUI('Received invalid values format');
+            return;
         }
         
-        if (Object.keys(computedValues).length > 0) {
-            socket.emit('store-value', computedValues);
-            updateMessageCount();
-            const valueStr = Object.entries(computedValues)
-                .map(([n, v]) => `F(${n})=${v}`)
-                .join(', ');
-            updateUI(`Computed and stored: ${valueStr}`);
-            
-            // Continue with computation if there are more values in the queue
-            if (state.computationQueue.size > 0) {
-                const next = Math.min(...state.computationQueue);
-                state.targetN = next;
-                state.computationQueue.delete(next);
-                await requestFibonacciComputation();
-            }
-        }
+        const { values } = data;
+        
+        // Store received values
+        Object.assign(state.values, values);
+        updateMessageCount();
+        
+        const receivedValues = Object.entries(values)
+            .map(([n, v]) => `F(${n})=${v}`)
+            .join(', ');
+        updateUI(`Received values: ${receivedValues}`);
+        
+        // Continue with computation
+        await requestFibonacciComputation();
     });
 }
 
