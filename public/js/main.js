@@ -283,7 +283,13 @@ const config = {
   
     s.on('connect', () => {
       updateUI('Connected', state.deviceRole);
-      showRoleSelection();
+      if (state.deviceRole === 'laptop' && state.targetN !== null) {
+        // If we were in the middle of a computation, try to resume
+        updateUI('Resuming previous computation', 'laptop');
+        requestFibonacciComputation();
+      } else {
+        showRoleSelection();
+      }
     });
     
     s.on('disconnect', () => {
@@ -304,8 +310,20 @@ const config = {
   
     s.on('role-confirmed', role => {
       state.deviceRole = role;
-      if (role === 'phone') loadState();
-      else                initializeBaseValues();
+      if (role === 'phone') {
+        loadState();
+        // If we have a saved state, notify laptop
+        if (state.values.size > 0) {
+          s.emit('phone-reconnect', {
+            values: Array.from(state.values.entries()),
+            targetN: state.targetN,
+            originalTarget: state.originalTarget,
+            messageCount: state.messageCount
+          });
+        }
+      } else {
+        initializeBaseValues();
+      }
       showInterface();
       updateUI(`Role: ${role}`, role);
     });
@@ -327,7 +345,11 @@ const config = {
       updateReconnectButton(false);
   
       if (saved?.values) {
-        state.values = new Map(saved.values);
+        // Merge saved values with current values
+        const savedValues = new Map(saved.values);
+        for (const [k, v] of savedValues) {
+          state.values.set(k, v);
+        }
         state.targetN = saved.targetN;
         state.originalTarget = saved.originalTarget;
         state.messageCount = saved.messageCount;
