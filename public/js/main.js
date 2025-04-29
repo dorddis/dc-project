@@ -3,7 +3,7 @@
 // Configuration
 const config = {
     MESSAGE_DELAY: 700,           // 0.7s between messages
-    RESPONSE_TIMEOUT: 10000,
+    RESPONSE_TIMEOUT: 20000,
     STORAGE_KEY: 'fibonacciState',
     BASE_VALUES: new Map([[0, 0], [1, 1]])
   };
@@ -20,7 +20,9 @@ const config = {
     isPhoneDisconnected: false,
     disconnectTimer:   null,
     pendingRequests:   new Set(),
-    isComputing:       false  // Track if we're in the middle of a computation
+    isComputing:       false,
+    lastComputed:      null,  // Track last successfully computed value
+    pendingComputation: null  // Track computation in progress
   };
   
   // UI elements
@@ -60,6 +62,8 @@ const config = {
     state.messageCount      = 0;
     state.isPhoneDisconnected = false;
     state.isComputing       = false;
+    state.lastComputed      = null;
+    state.pendingComputation = null;
     clearInterval(state.disconnectTimer);
     state.disconnectTimer   = null;
     state.pendingRequests   = new Set();
@@ -160,6 +164,11 @@ const config = {
         state.isPhoneDisconnected = true;
         updateReconnectButton(true);
         updateUI('Storage connection timed out', 'laptop');
+        // Store the current computation state
+        if (state.targetN !== null) {
+          state.lastComputed = state.targetN - 1; // Store the last successfully computed value
+          updateUI(`Stored last computation point: F(${state.lastComputed})`, 'laptop');
+        }
       } else {
         updateUI(`No response from storage, terminating in ${cd}s`, 'laptop');
       }
@@ -184,12 +193,14 @@ const config = {
     if (n <= 1) {
       state.values.set(n, n);
       updateUI(`F(${n})=${n}`, 'laptop');
+      state.lastComputed = n;
       state.isComputing = false;
       await continueComputation();
       return;
     }
     if (state.values.has(n)) {
       updateUI(`Have F(${n})=${state.values.get(n)}`, 'laptop');
+      state.lastComputed = n;
       state.isComputing = false;
       await continueComputation();
       return;
@@ -201,12 +212,15 @@ const config = {
       const res = state.values.get(n1) + state.values.get(n2);
       state.values.set(n, res);
       updateUI(`Computed F(${n})=${res}`, 'laptop');
+      state.pendingComputation = { n, res };
   
       // Send to phone if connected
       if (!state.isPhoneDisconnected) {
         await delay(config.MESSAGE_DELAY);
         state.socket.emit('computed-result', { [n]: res });
         updateMessageCount();
+        state.lastComputed = n;
+        state.pendingComputation = null;
       }
   
       state.isComputing = false;
@@ -312,7 +326,17 @@ const config = {
     s.on('role-confirmed', role => {
       state.deviceRole = role;
       if (role === 'phone') {
-        loadState();
+        // Clear phone state on reload
+        if (window.performance && window.performance.navigation.type === window.performance.navigation.TYPE_RELOAD) {
+          updateUI('Phone reloaded, clearing state', 'phone');
+          localStorage.removeItem(config.STORAGE_KEY);
+          state.values = new Map(config.BASE_VALUES);
+          state.targetN = null;
+          state.originalTarget = null;
+          state.messageCount = 0;
+        } else {
+          loadState();
+        }
         // If we have a saved state, notify laptop
         if (state.values.size > 0) {
           setTimeout(() => {
@@ -340,6 +364,10 @@ const config = {
       state.pendingRequests.clear();
       // Pause computation
       state.isComputing = false;
+      // Log if we had a pending computation
+      if (state.pendingComputation) {
+        updateUI(`Lost computation in transit: F(${state.pendingComputation.n})=${state.pendingComputation.res}`, 'laptop');
+      }
     });
   
     s.on('phone-reconnected', saved => {
@@ -360,21 +388,51 @@ const config = {
         state.targetN = saved.targetN;
         state.originalTarget = saved.originalTarget;
         state.messageCount = saved.messageCount;
-        updateUI('Storage reconnected, resuming', 'laptop');
         
-        // Clear pending requests and resume computation
-        state.pendingRequests.clear();
-        if (state.targetN !== null && !state.isComputing) {
-          // Add a small delay to ensure connection is stable
-          setTimeout(() => {
-            // Re-add current target to computation queue
-            state.computationQueue.add(state.targetN);
-            // Process computation queue
-            const next = Math.min(...state.computationQueue);
-            state.computationQueue.delete(next);
-            state.targetN = next;
-            requestFibonacciComputation();
-          }, 1000);
+        // Check if we need to recover from a lost computation
+        if (state.pendingComputation) {
+          const { n, res } = state.pendingComputation;
+          if (!state.values.has(n)) {
+            updateUI(`Recovering lost computation: F(${n})=${res}`, 'laptop');
+            state.values.set(n, res);
+            state.socket.emit('computed-result', { [n]: res });
+            updateMessageCount();
+          }
+          state.pendingComputation = null;
+        }
+        
+        // Rollback to last successful computation
+        if (state.lastComputed !== null) {
+          updateUI(`Rolling back to last successful computation: F(${state.lastComputed})=${state.values.get(state.lastComputed)}`, 'laptop');
+          // Find the next value to compute after the last successful one
+          let nextN = state.lastComputed + 1;
+          while (nextN <= state.originalTarget && state.values.has(nextN)) {
+            nextN++;
+          }
+          if (nextN <= state.originalTarget) {
+            state.targetN = nextN;
+            state.computationQueue = new Set([nextN]);
+            updateUI(`Resuming computation from F(${nextN})`, 'laptop');
+            
+            // Clear pending requests and resume computation
+            state.pendingRequests.clear();
+            if (!state.isComputing) {
+              // Add a small delay to ensure connection is stable
+              setTimeout(() => {
+                requestFibonacciComputation();
+              }, 1000);
+            }
+          } else {
+            updateUI('Computation already complete', 'laptop');
+          }
+        } else {
+          // If no lastComputed, try to resume from current target
+          if (state.targetN !== null && !state.isComputing) {
+            updateUI(`Resuming computation from F(${state.targetN})`, 'laptop');
+            setTimeout(() => {
+              requestFibonacciComputation();
+            }, 1000);
+          }
         }
       } else {
         updateUI('Storage reconnected (no state)', 'laptop');
