@@ -19,7 +19,8 @@ const config = {
     messageCount:      0,
     isPhoneDisconnected: false,
     disconnectTimer:   null,
-    pendingRequests:   new Set()  // Track pending value requests
+    pendingRequests:   new Set(),
+    isComputing:       false  // Track if we're in the middle of a computation
   };
   
   // UI elements
@@ -58,8 +59,10 @@ const config = {
     state.originalTarget    = null;
     state.messageCount      = 0;
     state.isPhoneDisconnected = false;
+    state.isComputing       = false;
     clearInterval(state.disconnectTimer);
-    state.disconnectTimer = null;
+    state.disconnectTimer   = null;
+    state.pendingRequests   = new Set();
     initializeBaseValues();
   }
   
@@ -152,8 +155,11 @@ const config = {
       cd--;
       if (cd <= 0) {
         clearInterval(state.disconnectTimer);
-        resetState();
-        showRoleSelection();
+        state.disconnectTimer = null;
+        // Don't reset state completely, just mark as disconnected
+        state.isPhoneDisconnected = true;
+        updateReconnectButton(true);
+        updateUI('Storage connection timed out', 'laptop');
       } else {
         updateUI(`No response from storage, terminating in ${cd}s`, 'laptop');
       }
@@ -162,13 +168,15 @@ const config = {
   
   // Fibonacci logic
   async function requestFibonacciComputation() {
-    if (!canSendMessage() || state.deviceRole !== 'laptop') {
+    if (!canSendMessage() || state.deviceRole !== 'laptop' || state.isComputing) {
       updateUI('Cannot compute: invalid state', 'laptop');
       return;
     }
+    state.isComputing = true;
     const n = state.targetN;
     if (typeof n !== 'number' || n < 0) {
       updateUI('Invalid target', 'laptop');
+      state.isComputing = false;
       return;
     }
   
@@ -176,11 +184,13 @@ const config = {
     if (n <= 1) {
       state.values.set(n, n);
       updateUI(`F(${n})=${n}`, 'laptop');
+      state.isComputing = false;
       await continueComputation();
       return;
     }
     if (state.values.has(n)) {
       updateUI(`Have F(${n})=${state.values.get(n)}`, 'laptop');
+      state.isComputing = false;
       await continueComputation();
       return;
     }
@@ -199,6 +209,7 @@ const config = {
         updateMessageCount();
       }
   
+      state.isComputing = false;
       await continueComputation();
       return;
     }
@@ -216,6 +227,7 @@ const config = {
         const next = Math.min(...state.computationQueue);
         state.computationQueue.delete(next);
         state.targetN = next;
+        state.isComputing = false;
         await requestFibonacciComputation();
         return;
       }
@@ -233,6 +245,7 @@ const config = {
     } else {
       updateUI('Storage disconnected, cannot compute', 'laptop');
     }
+    state.isComputing = false;
   }
   
   async function continueComputation() {
@@ -250,21 +263,6 @@ const config = {
       state.originalTarget = null;
       state.targetN = n;
       await requestFibonacciComputation();
-    }
-    else if (state.targetN !== null) {
-      // Final computation step
-      const n = state.targetN;
-      const n1 = n - 1, n2 = n - 2;
-      if (state.values.has(n1) && state.values.has(n2)) {
-        const res = state.values.get(n1) + state.values.get(n2);
-        state.values.set(n, res);
-        updateUI(`Computed F(${n})=${res}`, 'laptop');
-        
-        // Send to phone
-        await delay(config.MESSAGE_DELAY);
-        state.socket.emit('computed-result', { [n]: res });
-        updateMessageCount();
-      }
     }
   }
   
@@ -290,7 +288,10 @@ const config = {
     
     s.on('disconnect', () => {
       updateUI('Disconnected', state.deviceRole);
-      resetState();
+      // Only reset state if we're not in the middle of a computation
+      if (!state.isComputing) {
+        resetState();
+      }
       showRoleSelection();
     });
   
@@ -321,6 +322,7 @@ const config = {
     s.on('phone-reconnected', saved => {
       if (state.deviceRole !== 'laptop') return;
       clearInterval(state.disconnectTimer);
+      state.disconnectTimer = null;
       state.isPhoneDisconnected = false;
       updateReconnectButton(false);
   
@@ -333,7 +335,7 @@ const config = {
         
         // Clear pending requests and resume computation
         state.pendingRequests.clear();
-        if (state.targetN !== null) {
+        if (state.targetN !== null && !state.isComputing) {
           // Re-add current target to computation queue
           state.computationQueue.add(state.targetN);
           // Process computation queue
