@@ -374,12 +374,18 @@ function setupSocketHandlers(socket) {
         await delay(config.MESSAGE_DELAY);
         
         // Validate incoming request
-        if (!data || typeof data.n1 !== 'number' || typeof data.n2 !== 'number') {
-            updateUI('Received invalid value request');
-            return;
+        // if (!data || typeof data.n1 !== 'number' || typeof data.n2 !== 'number') {
+        //     updateUI('Received invalid value request');
+        //     return;
+        // }
+
+        const n1 = Number(data.n1);
+        const n2 = Number(data.n2);
+        if (!data || isNaN(n1) || isNaN(n2)) {
+        updateUI('Received invalid value request');
+        return;
         }
         
-        const { n1, n2 } = data;
         const values = {};
         let missingValues = false;
         

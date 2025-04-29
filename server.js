@@ -88,7 +88,10 @@ io.on('connection', async (socket) => {
         if (socket.role !== 'laptop' || !devices.phone || isPhoneDisconnected) return;
         
         await delay(config.MESSAGE_DELAY);
-        devices.phone.emit('value-request', data);
+        devices.phone.emit('value-request', {
+            n1: Number(data.n1),
+            n2: Number(data.n2)
+        });
         console.log('Laptop requesting values:', data);
     });
 
