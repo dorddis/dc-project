@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed Fibonacci Calculator</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Role Selection -->
+    <div id="role-selection">
+        <h2>Select Your Role</h2>
+        <div class="button-group">
+            <button id="laptop-btn" class="role-btn" data-role="laptop">I am a Laptop</button>
+            <button id="phone-btn" class="role-btn" data-role="phone">I am a Phone</button>
+        </div>
+    </div>
+
+    <!-- Laptop Interface -->
+    <div id="laptop-interface" class="hidden">
+        <h2>Laptop Interface (Computation)</h2>
+        <div class="input-group">
+            <input type="number" id="fib-input" placeholder="Enter n">
+            <button id="calculate-btn">Calculate F(n)</button>
+            <button id="reconnect-btn" disabled>Reconnect Storage</button>
+        </div>
+        <div id="laptop-logs" class="logs"></div>
+    </div>
+
+    <!-- Phone Interface -->
+    <div id="phone-interface" class="hidden">
+        <h2>Phone Interface (Storage)</h2>
+        <div class="controls">
+            <button id="disconnect-btn">Disconnect Storage</button>
+            <div class="message-counter">
+                Messages processed: <span id="message-count">0</span>
+            </div>
+        </div>
+        <div class="storage-container">
+            <h3>Stored Values</h3>
+            <table id="storage-table">
+                <thead>
+                    <tr>
+                        <th>n</th>
+                        <th>F(n)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>0</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td>1</td>
+                        <td>1</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="phone-logs" class="logs"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html> 
